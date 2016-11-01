@@ -1377,7 +1377,7 @@ void *HWCSession::HWCUeventThreadHandler() {
   static char uevent_data[PAGE_SIZE];
   int length = 0;
   prctl(PR_SET_NAME, uevent_thread_name_, 0, 0, 0);
-  setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
+  setpriority(PRIO_PROCESS, 0, android::PRIORITY_REALTIME);
   android_set_rt_ioprio(0, 1);
 
   if (!uevent_init()) {
