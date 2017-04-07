@@ -30,6 +30,7 @@ ifneq ($(TARGET_BOARD_AUTO),true)
 				else
                   ifneq ($(filter msmcobalt,$(TARGET_BOARD_PLATFORM)),)
                     include $(call all-named-subdir-makefiles,msmcobalt)
+				  endif
                 endif
               endif
             endif
