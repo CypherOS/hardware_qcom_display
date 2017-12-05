@@ -31,6 +31,7 @@
 #include <IQService.h>
 #include <hwc_utils.h>
 #include <mdp_version.h>
+#include <dlfcn.h>
 
 #define QCLIENT_DEBUG 0
 
@@ -188,6 +189,15 @@ static void setWfdStatus(hwc_context_t *ctx, uint32_t wfdStatus) {
     }
 }
 
+static void applyModeById(hwc_context_t* ctx, int32_t modeId) {
+    int err = ctx->mColorMode->applyModeByID(modeId);
+    if (err) {
+        ALOGD("%s: Not able to apply mode: %d", __FUNCTION__, modeId);
+    } else {
+        ctx->proc->invalidate(ctx->proc);
+	}
+}
+
 status_t QClient::notifyCallback(uint32_t command, const Parcel* inParcel,
         Parcel* outParcel) {
     status_t ret = NO_ERROR;
@@ -226,6 +236,9 @@ status_t QClient::notifyCallback(uint32_t command, const Parcel* inParcel,
             break;
         case IQService::SET_WFD_STATUS:
             setWfdStatus(mHwcContext,inParcel->readInt32());
+            break;
+		case IQService::APPLY_MODE_BY_ID:
+            applyModeById(mHwcContext, inParcel->readInt32());
             break;
         default:
             ret = NO_ERROR;
