@@ -43,6 +43,7 @@
 #include "QService.h"
 #include "comptype.h"
 #include "hwc_virtual.h"
+#include <dlfcn.h>
 
 using namespace qClient;
 using namespace qService;
@@ -274,6 +275,9 @@ void initContext(hwc_context_t *ctx)
             && !strcmp(value, "true")) {
         ctx->mMDPDownscaleEnabled = true;
     }
+	
+	// Initializing boot anim completed check to false
+    ctx->mDefaultModeApplied = false;
 
     // Initialize gpu perfomance hint related parameters
     property_get("sys.hwc.gpu_perf_mode", value, "0");
@@ -285,6 +289,8 @@ void initContext(hwc_context_t *ctx)
     ctx->mGPUHintInfo.mPrevCompositionGLES = false;
     ctx->mGPUHintInfo.mCurrGPUPerfMode = EGL_GPU_LEVEL_0;
 #endif
+    ctx->mColorMode = new ColorMode();
+    ctx->mColorMode->init();
     ALOGI("Initializing Qualcomm Hardware Composer");
     ALOGI("MDP version: %d", ctx->mMDP.version);
 }
@@ -348,6 +354,12 @@ void closeContext(hwc_context_t *ctx)
     if(ctx->mQService) {
         delete ctx->mQService;
         ctx->mQService = NULL;
+    }
+	
+	if(ctx->mColorMode) {
+        ctx->mColorMode->destroy();
+        delete ctx->mColorMode;
+        ctx->mColorMode = NULL;
     }
 }
 
@@ -2151,6 +2163,29 @@ void setGPUHint(hwc_context_t* ctx, hwc_display_contents_1_t* list) {
 #endif
 }
 
+void applyDefaultMode(hwc_context_t *ctx) {
+    char value[PROPERTY_VALUE_MAX];
+    int boot_finished = 0;
+    static int ret = ctx->mColorMode->applyDefaultMode();
+    if(!ret) {
+        ctx->mDefaultModeApplied = true;
+        return;
+    }
+
+    // Reading property set on boot finish in SF
+    property_get("service.bootanim.exit", value, "0");
+    boot_finished = atoi(value);
+    if (!boot_finished)
+        return;
+
+    ret = ctx->mColorMode->applyDefaultMode();
+    if (ret) {
+        ALOGD("%s: Not able to apply default mode", __FUNCTION__);
+	}
+
+    ctx->mDefaultModeApplied = true;
+}
+
 void BwcPM::setBwc(const hwc_rect_t& crop,
             const hwc_rect_t& dst, const int& transform,
             ovutils::eMdpFlags& mdpFlags) {
@@ -2300,6 +2335,115 @@ hwc_rect_t getSanitizeROI(struct hwc_rect roi, hwc_rect boundary)
 
 
    return t_roi;
+}
+
+void ColorMode::init() {
+    //Map symbols from libmm-qdcm and get list of modes
+    mModeHandle = dlopen("libmm-qdcm.so", RTLD_NOW);
+    if (mModeHandle) {
+        *(void **)& fnApplyDefaultMode = dlsym(mModeHandle, "applyDefaults");
+        *(void **)& fnApplyModeById = dlsym(mModeHandle, "applyModeById");
+        *(void **)& fnGetNumModes = dlsym(mModeHandle, "getNumDisplayModes");
+		*(void **)& fnGetCurrentMode = dlsym(mModeHandle, "getCurrentMode");
+        *(void **)& fnGetModeList = dlsym(mModeHandle, "getDisplayModeIdList");
+        *(void **)& fnSetDefaultMode = dlsym(mModeHandle, "setDefaultMode");
+		*(void **)& fnDeleteInstance = dlsym(mModeHandle, "deleteInstance");
+    } else {
+        ALOGW("Unable to load libmm-qdcm");
+    }
+
+    if(fnGetNumModes) {
+        mNumModes = fnGetNumModes(HWC_DISPLAY_PRIMARY);
+        if(mNumModes > MAX_NUM_COLOR_MODES) {
+            ALOGE("Number of modes is above the limit: %d", mNumModes);
+            mNumModes = 0;
+            return;
+        }
+        if(fnGetModeList) {
+            fnGetModeList(mModeList, &mCurMode, HWC_DISPLAY_PRIMARY);
+            mCurModeIndex = getIndexForMode(mCurMode);
+            ALOGI("ColorMode: current mode: %d current mode index: %d number of modes: %d",
+                    mCurMode, mCurModeIndex, mNumModes);
+        }
+    }
+}
+
+//Legacy API
+int ColorMode::applyDefaultMode() {
+	int ret = 0;
+    if(fnApplyDefaultMode) {
+        ret = fnApplyDefaultMode(HWC_DISPLAY_PRIMARY);
+        if(!ret) {
+            mCurModeIndex = getIndexForMode(fnGetCurrentMode(HWC_DISPLAY_PRIMARY));
+        }
+        return ret;
+    } else {
+        return -EINVAL;
+    }
+}
+
+int ColorMode::applyModeByID(int modeID) {
+    if(fnApplyModeById) {
+        int ret = fnApplyModeById(modeID, HWC_DISPLAY_PRIMARY);
+        if (!ret)
+            ret = setDefaultMode(modeID);
+        return ret;
+    } else {
+        return -EINVAL;
+    }
+}
+
+//This API is called from setActiveConfig
+//The value here must be set as default
+int ColorMode::applyModeByIndex(int index) {
+    int ret = 0;
+    int mode  = getModeForIndex(index);
+    if(mode < 0) {
+        ALOGE("Invalid mode for index: %d", index);
+        return -EINVAL;
+    }
+    ALOGD("%s: Applying mode index: %d modeID: %d", __FUNCTION__, index, mode);
+    ret = applyModeByID(mode);
+    if(!ret) {
+        mCurModeIndex = index;
+    }
+    return ret;
+}
+
+int ColorMode::setDefaultMode(int modeID) {
+    if(fnSetDefaultMode) {
+        ALOGD("Setting default color mode to %d", modeID);
+        return fnSetDefaultMode(modeID, HWC_DISPLAY_PRIMARY);
+    } else {
+        return -EINVAL;
+    }
+}
+
+int ColorMode::getModeForIndex(int index) {
+    if(index < mNumModes) {
+        return mModeList[index];
+    } else {
+        return -EINVAL;
+    }
+}
+
+int ColorMode::getIndexForMode(int mode) {
+    if(mModeList) {
+        for(int32_t i = 0; i < mNumModes; i++)
+            if(mModeList[i] == mode)
+                return i;
+    }
+    return -EINVAL;
+}
+
+void ColorMode::destroy() {
+    if(mModeHandle) {
+		if (fnDeleteInstance) {
+            fnDeleteInstance();
+        }
+        dlclose(mModeHandle);
+        mModeHandle = NULL;
+    }
 }
 
 };//namespace qhwc

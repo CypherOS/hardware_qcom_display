@@ -53,6 +53,7 @@ public:
         PAUSE_WFD,               // Pause/Resume WFD
         SET_WFD_STATUS,          // Set if wfd connection is on/off
         CONNECT_HDMI_CLIENT,     // Connect HDMI Client
+		APPLY_MODE_BY_ID,        // Apply display mode by ID
         COMMAND_LIST_END = 400,
     };
 

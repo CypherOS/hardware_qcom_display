@@ -42,6 +42,7 @@
 #define MIN_DISPLAY_YRES 200
 #define HWC_WFDDISPSYNC_LOG 0
 #define STR(f) #f;
+#define MAX_NUM_COLOR_MODES 32
 
 //Fwrd decls
 struct hwc_context_t;
@@ -185,6 +186,38 @@ private:
     hwc_layer_1_t* mLayer[MAX_SESS];
     overlay::Rotator* mRot[MAX_SESS];
     uint32_t mCount;
+};
+
+//ColorModes for primary displays
+class ColorMode {
+public:
+    void init();
+    void destroy();
+    int32_t getNumModes() { return mNumModes; }
+    const int32_t* getModeList() { return mModeList; }
+    int32_t getModeForIndex(int32_t index);
+    int32_t getIndexForMode(int32_t mode);
+    int applyDefaultMode();
+    int applyModeByID(int modeID);
+    int applyModeByIndex(int index);
+    int setDefaultMode(int modeID);
+    int getActiveModeIndex() { return mCurModeIndex; }
+private:
+    int32_t (*fnGetNumModes)(int /*dispID*/);
+	int32_t (*fnGetCurrentMode)(int /*dispID*/);
+    int32_t (*fnGetModeList)(int32_t* /*mModeList*/, int32_t* /*current default*/,
+            int32_t /*dispID*/);
+    int (*fnApplyDefaultMode)(int /*dispID*/);
+    int (*fnApplyModeById)(int /*modeID*/, int /*dispID*/);
+    int (*fnSetDefaultMode)(int /*modeID*/, int /*dispID*/);
+	int (*fnDeleteInstance)();
+
+    void*     mModeHandle = NULL;
+    int32_t   mModeList[MAX_NUM_COLOR_MODES];
+    int32_t   mNumModes = 0;
+    int32_t   mCurModeIndex = 0;
+    int32_t   mCurMode = 0;
+
 };
 
 inline uint32_t LayerRotMap::getCount() const {
@@ -378,6 +411,9 @@ bool isDisplaySplit(hwc_context_t* ctx, int dpy);
 // due to idle fallback or MDP composition.
 void setGPUHint(hwc_context_t* ctx, hwc_display_contents_1_t* list);
 
+// Applies default mode at boot
+void applyDefaultMode(hwc_context_t *ctx);
+
 // Inline utility functions
 static inline bool isSkipLayer(const hwc_layer_1_t* l) {
     return (UNLIKELY(l && (l->flags & HWC_SKIP_LAYER)));
@@ -559,6 +595,10 @@ struct hwc_context_t {
     struct gpu_hint_info mGPUHintInfo;
     // Display binder service
     qService::QService* mQService;
+	//Used to notify that default mode has been applied
+    bool mDefaultModeApplied;
+	//Manages color modes
+    qhwc::ColorMode *mColorMode;
 };
 
 namespace qhwc {
