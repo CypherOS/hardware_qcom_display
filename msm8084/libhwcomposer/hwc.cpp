@@ -282,6 +282,8 @@ static int hwc_prepare_primary(hwc_composer_device_1 *dev,
     hwc_context_t* ctx = (hwc_context_t*)(dev);
     const int dpy = HWC_DISPLAY_PRIMARY;
     bool fbComp = false;
+	if (!ctx->mDefaultModeApplied)
+        applyDefaultMode(ctx);
     if (LIKELY(list && list->numHwLayers > 1) &&
             ctx->dpyAttr[dpy].isActive) {
 
@@ -764,8 +766,15 @@ int hwc_getDisplayConfigs(struct hwc_composer_device_1* dev, int disp,
     switch(disp) {
         case HWC_DISPLAY_PRIMARY:
             if(*numConfigs > 0) {
-                configs[0] = 0;
-                *numConfigs = 1;
+                if(ctx->mColorMode->getNumModes() > 0) {
+                    *numConfigs = ctx->mColorMode->getNumModes();
+                    for (size_t i = 0; i < *numConfigs; i++)
+                        configs[i] = (uint32_t) i;
+
+                } else {
+                    configs[0] = 0;
+                    *numConfigs = 1;
+                }
             }
             ret = 0; //NO_ERROR
             break;
@@ -798,20 +807,7 @@ int hwc_getDisplayAttributes(struct hwc_composer_device_1* dev, int disp,
         return -1;
     }
 
-    //From HWComposer
-    static const uint32_t DISPLAY_ATTRIBUTES[] = {
-        HWC_DISPLAY_VSYNC_PERIOD,
-        HWC_DISPLAY_WIDTH,
-        HWC_DISPLAY_HEIGHT,
-        HWC_DISPLAY_DPI_X,
-        HWC_DISPLAY_DPI_Y,
-        HWC_DISPLAY_NO_ATTRIBUTE,
-    };
-
-    const size_t NUM_DISPLAY_ATTRIBUTES = (sizeof(DISPLAY_ATTRIBUTES) /
-            sizeof(DISPLAY_ATTRIBUTES)[0]);
-
-    for (size_t i = 0; i < NUM_DISPLAY_ATTRIBUTES - 1; i++) {
+    for (size_t i = 0; attributes[i] != HWC_DISPLAY_NO_ATTRIBUTE; i++) {
         switch (attributes[i]) {
         case HWC_DISPLAY_VSYNC_PERIOD:
             values[i] = ctx->dpyAttr[disp].vsync_period;
@@ -831,6 +827,9 @@ int hwc_getDisplayAttributes(struct hwc_composer_device_1* dev, int disp,
             break;
         case HWC_DISPLAY_DPI_Y:
             values[i] = (int32_t) (ctx->dpyAttr[disp].ydpi*1000.0);
+            break;
+		case HWC_DISPLAY_COLOR_TRANSFORM:
+            values[i] = ctx->mColorMode->getModeForIndex(config);
             break;
         default:
             ALOGE("Unknown display attribute %d",
@@ -867,15 +866,32 @@ void hwc_dump(struct hwc_composer_device_1* dev, char *buff, int buff_len)
     strlcpy(buff, aBuf.string(), buff_len);
 }
 
-int hwc_getActiveConfig(struct hwc_composer_device_1* /*dev*/, int /*disp*/) {
-    //Supports only the default config (0th index) for now
-    return 0;
+int hwc_getActiveConfig(struct hwc_composer_device_1* dev, int disp) {
+	
+	hwc_context_t* ctx = (hwc_context_t*)(dev);
+	
+    // For use cases when primary panel is the default interface we only have
+    // the default config (0th index)
+	if (disp == HWC_DISPLAY_PRIMARY) {
+        return ctx->mColorMode->getActiveModeIndex();
+    } else if (HWC_DISPLAY_VIRTUAL) {
+        return 0;
+    }
 }
 
-int hwc_setActiveConfig(struct hwc_composer_device_1* /*dev*/, int /*disp*/,
+int hwc_setActiveConfig(struct hwc_composer_device_1* dev, int disp,
         int index) {
-    //Supports only the default config (0th index) for now
-    return (index == 0) ? index : -EINVAL;
+    
+    hwc_context_t* ctx = (hwc_context_t*)(dev);	
+	
+    // For use cases when primary panel is the default interface we only switch
+    // color modes
+    if(disp == HWC_DISPLAY_PRIMARY) {
+        return ctx->mColorMode->applyModeByIndex(index);
+    } else if (HWC_DISPLAY_VIRTUAL) {
+        // virtual supports only the default config (0th index)
+        return (index == 0) ? index : -EINVAL;
+	}
 }
 
 static int hwc_device_close(struct hw_device_t *dev)
